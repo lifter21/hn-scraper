@@ -1,0 +1,11 @@
+{
+  "name": "hacker-news-scraper",
+  "version": "1.0.0",
+  "description": "Hacker News Scraper",
+  "main": "scrap.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Alex Bondarenko",
+  "license": "ISC"
+}
