@@ -20,6 +20,10 @@ or
 
 `node scrap hackernews --posts=10 `
 
+( use `scraper` instead of `scrap` to run scrapping script)
+
+` npm run-script scraper -- --posts 10`
+
 If you use Docker or Docker-compose next commands helps you to run script:
 
 Dockerfile:
@@ -27,6 +31,7 @@ Dockerfile:
 1. Build:
 
  `docker build -t scraper .`
+
 2. Run:
 
 `docker run -it scraper`
@@ -55,4 +60,4 @@ and then run inside container one of the commands as described above.
 
 4. [request](https://www.npmjs.com/package/request) - used for requesting data from hackernews API
 
-5. [x-ray](https://www.npmjs.com/package/x-ray) - used for scraping data
+5. [cheerio](https://www.npmjs.com/package/cheerio) - used for scraping data by DOM manipulations
