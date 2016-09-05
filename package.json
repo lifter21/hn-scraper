@@ -5,15 +5,16 @@
   "main": "scrap.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node scrap.js hackernews --posts 100"
+    "start": "node scrap.js hackernews --posts 100",
+    "scraper": "node scraper.js hackernews"
   },
   "author": "Alex Bondarenko",
   "license": "ISC",
   "dependencies": {
+    "cheerio": "^0.22.0",
     "command-line-args": "^3.0.1",
     "joi": "^9.0.4",
     "pretty-data2": "^0.40.1",
-    "request": "^2.74.0",
-    "x-ray": "^2.3.0"
+    "request": "^2.74.0"
   }
 }
