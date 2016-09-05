@@ -5,12 +5,14 @@ console.time('Time spent while getting top stories');
 // module dependencies
 const joi = require('joi');
 const path = require('path');
+const cheerio = require('cheerio');
 const request = require('request');
 const pd = require('pretty-data2').pd;
 const commandLineArgs = require('command-line-args');
 
 // --posts n option default value, and config commandLineArgs tool by explicitly defining option name, its alias and format
 let postsCount;
+const CODE_PHRASE = 'hackernews';
 const POSTS_KEY = 'posts';
 let reconnectionsCount = 0;
 const DEFAULT_POSTS_COUNT = 100;
@@ -18,15 +20,30 @@ const RECONNECTIONS_ATTEMPTS = 10;
 const optionDefinitions = [{name: POSTS_KEY, alias: 'p', type: Number}];
 const options = commandLineArgs(optionDefinitions);
 
-// api paths
-const EXT = '.json';
-const STORY_BASE_PATH = 'item/';        //https://hacker-news.firebaseio.com/v0/item/160705.json
-const CODE_PHRASE = 'hackernews';
-const TOP_STORIES_PATH = 'topstories';  // https://hacker-news.firebaseio.com/v0/topstories.json
-const HACKER_NEWS_API_URL = 'https://hacker-news.firebaseio.com/v0/';
+// news paths
+const NEWS_PATH = 'news?p=';
+const NEWS_BASE_PATH = 'https://news.ycombinator.com/';
 
+
+// define page classes for future scrapping using them
+// const PAGINATE_CLASS = '.morelink';
+// const CONTAINER_CLASS = '.itemlist';
+const COMMENT_ELEM_NUMBER = 2;
+
+const ITEM_CLASS = '.athing';
+const ITEM_RANK_CLASS = '.rank';
+const ITEM_POINTS_CLASS = '.score';
+const ITEM_URI_CLASS = '.storylink';
+const ITEM_AUTHOR_CLASS = '.hnuser';
+const ITEM_TITLE_CLASS = '.storylink';
+const ITEM_SUBTEXT_CLASS = '.subtext';
+
+const RANK_REGEXP = /^(\d+)\.$/i ;
+const POINTS_REGEXP = /^(\d+)\s(point(|s))$/i;
+const COMMENTS_REGEXP = /^(\d+)\s(comment(|s))$/i ;
+
+// validation options
 const STRING_MAX_LENGTH = 256;
-
 const validationOptions = {
     stripUnknown: true,
     abortEarly: true,
@@ -35,11 +52,12 @@ const validationOptions = {
 
 // define object validation schema to get only valuable data
 const storySchema = joi.object().keys({
-    url: joi.string().uri().required(),                           // uri
-    by: joi.string().max(STRING_MAX_LENGTH).required(),           // author
-    score: joi.number().integer().positive().required(),          // points
-    descendants: joi.number().integer().positive().required(),     // comments count
-    title: joi.string().min(1).max(STRING_MAX_LENGTH).required() // title
+    title: joi.string().min(1).max(STRING_MAX_LENGTH).required(),
+    uri: joi.string().uri().required(),
+    author: joi.string().max(STRING_MAX_LENGTH).required(),
+    points: joi.number().integer().positive().required(),
+    comments: joi.number().integer().positive().required(),
+    rank: joi.number().integer().positive().required()
 });
 
 /**
@@ -74,145 +92,121 @@ function checkPostsOption () {
 
 /**
  * Helps to generate valid api path
- * @param {string} pathString
+ * @param {string} page
  * @returns {string}
  */
-function getFullPath(pathString) {
-    return path.format({root: HACKER_NEWS_API_URL, name: pathString, ext: EXT});
+function getPathByPage(page) {
+    return path.format({root: NEWS_BASE_PATH, name: `${NEWS_PATH + page}`});
 }
 
 /**
- *  Load all top stories ids
+ *
+ * @param page {number}
  * @returns {Promise}
  */
-function getAllStoriesIds() {
-    let ids;
-
+function getPage(page) {
     return new Promise((resolve, reject) => {
-        let path = getFullPath(TOP_STORIES_PATH);
-
-        request(path, (err, response, body) => {
+        request(getPathByPage(page), (err, response, body) => {
             if (err) return reject(err);
 
-            try {
-                ids = JSON.parse(body);
-            } catch (e) {
-                return reject(e);
-            }
-
-            resolve(ids);
+            resolve(body);
         });
     });
 }
 
 /**
- * Load story data from APU
- * @param id {int}
- * @returns {Promise}
+ * Helper function to get number from the string using regExp
+ * @param string {string}
+ * @param regExp {regexp}
+ * @returns {number}
  */
-function getStoryById(id) {
-    let story;
-    let path = getFullPath(STORY_BASE_PATH + id);
+function getCountByRegExp (string, regExp) {
+    let _res = regExp.exec(string);
 
+    return _res ? _res[1] : 0;
+}
 
-    return new Promise((resolve, reject) => {
-        setImmediate(function () {
-            request(path, (err, response, body) => {
-                if (err) return reject(err);
+/**
+ *
+ * @param page
+ * @returns {Promise.<Array>}
+ */
+function processPage(page) {
+    let result = [];
 
-                try {
-                    story = JSON.parse(body);
-                } catch (e) {
-                    return reject(e);
+    let $ = cheerio.load(page);
+
+    $(ITEM_CLASS).each(function(index, elem) {
+        let data = $(elem);
+
+        let title = data.find(ITEM_TITLE_CLASS).text();
+        let uri = data.find(ITEM_URI_CLASS).attr('href');
+        let author = data.next().find(ITEM_AUTHOR_CLASS).text();
+        let rank = data.find(ITEM_RANK_CLASS).text();
+        let comments = data.next().find(ITEM_SUBTEXT_CLASS).children('a').eq(COMMENT_ELEM_NUMBER).text();
+        let points = data.next().find(ITEM_POINTS_CLASS).text();
+
+        // write normalised(filtered by regexp) values
+        rank =  RANK_REGEXP.exec(rank)[1];
+        points = getCountByRegExp(points, POINTS_REGEXP);
+        comments = getCountByRegExp(comments, COMMENTS_REGEXP);
+
+        let story = {
+            title,
+            uri,
+            author,
+            points,
+            comments,
+            rank
+        };
+
+        // validate story object
+        let _validation = joi.validate(story, storySchema, validationOptions);
+        if (_validation.error) return; // go to the next element if story object is not valid
+
+        result.push(_validation.value);
+    });
+
+    return Promise.resolve(result);
+}
+
+/**
+ * Load all necessary data
+ * @returns {Promise.<TResult>}
+ */
+function loadData() {
+    let page = 1;
+    let count = 0;
+    let result = [];
+
+    /**
+     * load pages' data recursively
+     * @returns {Promise.<TResult>}
+     */
+    let loadPageData = function loadPageData() {
+        return getPage(page)
+            .then(processPage)
+            .then(pageData => {
+                if (pageData.length) {
+                    result = result.concat(pageData);
                 }
 
-                resolve(story);
-            });
-        });
-    });
-}
+                page++;
+                count = result.length;
 
-/**
- * Load stories from API
- * @param ids {array}
- * @returns {Promise}
- */
-function getStoriesByIds(ids) {
-    let tasks = [];
+                if (count < postsCount) {
+                    return loadPageData(); // load next page data
+                } else {
+                    if (count > postsCount) {
+                        return result.splice(0, postsCount); // return only desired posts count
+                    }
 
-    ids.forEach(id => {
-        tasks.push(getStoryById(id));
-    });
-    
-    return Promise.all(tasks);
-}
-
-/**
- * 
- * @param ids
- * @returns {Promise}
- */
-function processStoriesByIds(ids) {
-    let result = [];
-    
-    let _ids = Object.assign([], ids); // make a copy of initial data
-    _ids = _ids.sort((a, b) => a < b); // sort stories ids from newest to oldest
-
-    let cutIds = count => _ids.splice(0, count); // get only defined coutnt of stories
-    let processingIds = cutIds(postsCount);
-    
-    // recursively load stories data
-    let processStories = ids => {
-        return getStoriesByIds(ids)
-            .then(stories => {
-                stories.forEach(story => {
-                    // validate loaded data
-                    let _res = joi.validate(story, storySchema, validationOptions);
-
-                    if (_res.error) return;
-                    
-                    result.push(_res.value); // push valid story object to result array
-                });
-
-                if (!_ids.length) return result; // if all top stories have processed and nothing to do now
-
-                if (result.length < postsCount) {
-                    processingIds = cutIds(postsCount - result.length); // take only missing count of posts
-                    
-                    return processStories(processingIds); // get other stories if result array still is not full
-                }  else {
                     return result;
                 }
             });
     };
 
-    return processStories(processingIds);
-}
-
-/**
- * Map stories data
- * @param stories {array}
- * @returns {Array|*}
- */
-function mapStories(stories) {
-    // sort stories from lowers score to highest
-    stories = stories.sort((a, b) => {
-        return a.score > b.score;
-    });
-    
-    // prepare a story view is needed
-    stories = stories.map((story, i) => {
-        return {
-            title: story.title,
-            uri: story.url,
-            author: story.by,
-            points: story.score,
-            comments: story.descendants,
-            rank: i+1
-        };
-    });
-
-    return stories;
+    return loadPageData();
 }
 
 // make waiting more fun
@@ -261,14 +255,13 @@ process.nextTick(() => {
  */
 function run() {
     process.nextTick(() => {
-        return getAllStoriesIds()
-            .then(processStoriesByIds)
-            .then(mapStories)
+        loadData()
             .then(printResults)
-            .catch(handleError);
+            .catch(handleError)
     });
 }
 
 checkCodePhrase();
 checkPostsOption();
+
 run();
