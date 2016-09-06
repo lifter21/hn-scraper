@@ -1,0 +1,30 @@
+{
+  "preset": "google",
+  "requireCurlyBraces": [
+     "else",
+     "for",
+     "while",
+     "do",
+     "try",
+     "catch"
+  ],
+  "maximumLineLength": {
+    "value": 150,
+    "allowComments": true,
+    "allowRegex": true
+  },
+  "requireSpacesInFunctionDeclaration": {
+    "beforeOpeningRoundBrace": true,
+    "beforeOpeningCurlyBrace": true
+  },
+  "disallowSpacesInFunctionExpression": null,
+  "disallowSpacesInFunctionDeclaration": null,
+  "disallowSpacesInAnonymousFunctionExpression": null,
+  "disallowMultipleVarDecl": null,
+  "excludeFiles": ["./client/"],
+  "jsDoc": {
+    "checkAnnotations": {
+      "preset": "jsdoc3"
+    }
+  }
+}
